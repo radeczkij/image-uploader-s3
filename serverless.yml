@@ -1,71 +1,202 @@
-# Welcome to Serverless!
-#
-# This file is the main config file for your service.
-# It's very minimal at this point and uses default values.
-# You can always add more config options for more control.
-# We've included some commented out config examples here.
-# Just uncomment any of them to get that config option.
-#
-# For full config options, check the docs:
-#    docs.serverless.com
-#
-# Happy Coding!
-
 service: image-upload-to-s3
-# app and org for use with dashboard.serverless.com
-#app: your-app-name
-#org: your-org-name
 
-# You can pin your service to only deploy with a specific Serverless version
-# Check out our docs for more details
-frameworkVersion: "3"
-
+# Cloud Provider
 provider:
   name: aws
+  stage: dev
+  region: us-east-1
   runtime: nodejs18.x
   profile: ImageUpload
+package:
+  patterns:
+    - "!src"
+    - "!tsconfig.json"
+    - "!.serverless"
+    # - "!node_modules/**"
+    # - "node_modules/aws-sdk/**"
+    # - "node_modules/dotenv/**"
 
-# you can overwrite defaults here
-#  stage: dev
-#  region: us-east-1
-
-# you can add statements to the Lambda function's IAM Role here
-#  iam:
-#    role:
-#      statements:
-#        - Effect: "Allow"
-#          Action:
-#            - "s3:ListBucket"
-#          Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
-#        - Effect: "Allow"
-#          Action:
-#            - "s3:PutObject"
-#          Resource:
-#            Fn::Join:
-#              - ""
-#              - - "arn:aws:s3:::"
-#                - "Ref" : "ServerlessDeploymentBucket"
-#                - "/*"
-
-# you can define service wide environment variables here
-#  environment:
-#    variable1: value1
-
-# you can add packaging information here
-#package:
-#  patterns:
-#    - '!exclude-me.js'
-#    - '!exclude-me-dir/**'
-#    - include-me.js
-#    - include-me-dir/**
-
-functions:
-  hello:
-    handler: handler.hello
-
+# Resources
 resources:
   Resources:
-    BucketUpload:
+    usersDynamoDb:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: usersTable
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: user_name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: user_name
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+    usersCognito:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UsernameAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+        MfaConfiguration: OFF
+        UserPoolName: Users
+
+    usersCognitoClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ExplicitAuthFlows:
+          - ALLOW_USER_PASSWORD_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        ClientName: usersCognitoClient
+        UserPoolId: !Ref usersCognito
+        TokenValidityUnits:
+          IdToken: hours
+          RefreshToken: days
+        IdTokenValidity: 1
+        RefreshTokenValidity: 3650
+
+    S3Bucket:
       Type: AWS::S3::Bucket
       Properties:
         BucketName: imageuploadbucket-043299
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: false
+
+# Serverless Functions
+functions:
+  getPresignedUrl:
+    handler: "dist/getPresignedUrl.handler"
+    events:
+      - http:
+          path: "getUrl"
+          method: "get"
+          authorizer:
+            name: authorizer
+            identitySource: method.request.header.Bearer
+            type: COGNITO_USER_POOLS
+            arn: !GetAtt usersCognito.Arn
+    environment:
+      ACCESSKEYID:
+      SECRETACCESSKEY:
+      REGION: us-east-1
+      BUCKET_NAME:
+        Ref: S3Bucket
+
+  getPhoto:
+    handler: "dist/getPhoto.handler"
+    events:
+      - http:
+          path: "getPhoto"
+          method: "get"
+          authorizer:
+            name: authorizer
+            identitySource: method.request.header.Bearer
+            type: COGNITO_USER_POOLS
+            arn: !GetAtt usersCognito.Arn
+    environment:
+      ACCESSKEYID:
+      SECRETACCESSKEY:
+      REGION: us-east-1
+
+  signUp:
+    handler: "dist/signUp.handler"
+    events:
+      - http:
+          path: "signUp"
+          method: "post"
+    environment:
+      USER_POOL_ID:
+        Ref: usersCognito
+      APP_CLIENT_ID:
+        Ref: usersCognitoClient
+      ACCESSKEYID:
+      SECRETACCESSKEY:
+      REGION: us-east-1
+
+  preSignUp:
+    handler: "dist/preSignUp.handler"
+    events:
+      - cognitoUserPool:
+          pool: Users
+          trigger: PreSignUp
+          existing: true
+
+  login:
+    handler: "dist/login.handler"
+    events:
+      - http:
+          path: "login"
+          method: "post"
+    environment:
+      USER_POOL_ID:
+        Ref: usersCognito
+      APP_CLIENT_ID:
+        Ref: usersCognitoClient
+      ACCESSKEYID:
+      SECRETACCESSKEY:
+      REGION: us-east-1
+
+  putItemsDb:
+    handler: "dist/putItemsDb.handler"
+    events:
+      - s3:
+          bucket: "image-uploader-internship"
+          event: "s3:ObjectCreated:*"
+          existing: true
+    environment:
+      ACCESSKEYID:
+      SECRETACCESSKEY:
+      REGION: us-east-1
+
+  deletePhotoS3:
+    handler: "dist/deletePhotoS3.handler"
+    events:
+      - http:
+          path: "deletePhoto"
+          method: "post"
+          authorizer:
+            name: authorizer
+            identitySource: method.request.header.Bearer
+            type: COGNITO_USER_POOLS
+            arn: !GetAtt usersCognito.Arn
+    environment:
+      ACCESSKEYID:
+      SECRETACCESSKEY:
+      REGION: us-east-1
+      BUCKET_NAME:
+        Ref: S3Bucket
+
+  deletePhotoDynamoDb:
+    handler: "dist/deletePhotoDynamoDb.handler"
+    events:
+      - s3:
+          bucket: "image-uploader-internship"
+          event: "s3:ObjectRemoved:Delete"
+          existing: true
+    environment:
+      ACCESSKEYID:
+      SECRETACCESSKEY:
+      REGION: us-east-1
+      TABLE_NAME:
+        Ref: usersDynamoDb
+
+  refreshTokens:
+    handler: "dist/refreshTokens.handler"
+    events:
+      - http:
+          path: "refresh"
+          method: "get"
+    environment:
+      USER_POOL_ID:
+        Ref: usersCognito
+      APP_CLIENT_ID:
+        Ref: usersCognitoClient
+      ACCESSKEYID:
+      SECRETACCESSKEY:
+      REGION: us-east-1
