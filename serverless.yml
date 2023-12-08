@@ -146,7 +146,7 @@ functions:
     handler: "dist/putItemsDb.handler"
     events:
       - s3:
-          bucket: "image-uploader-internship"
+          bucket: "imageuploadbucket-043299"
           event: "s3:ObjectCreated:*"
           existing: true
     environment:
@@ -176,7 +176,7 @@ functions:
     handler: "dist/deletePhotoDynamoDb.handler"
     events:
       - s3:
-          bucket: "image-uploader-internship"
+          bucket: "imageuploadbucket-043299"
           event: "s3:ObjectRemoved:Delete"
           existing: true
     environment:
